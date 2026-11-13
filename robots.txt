@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://esimsekweb-spec.github.io/ssw-course/sitemap.xml
