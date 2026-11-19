@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#092c62">
+<title>SSW Course | Yetkili Yönetim Paneli</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f0f6fb;color:#173657;font:15px/1.5 system-ui,sans-serif}
+header{background:#092c62;color:white;padding:19px max(18px,calc((100% - 1150px)/2))}
+main{max-width:1150px;margin:28px auto;padding:0 18px}h1{font-size:23px;margin:0}h2{font-size:20px}
+.panel{background:white;border:1px solid #d7e5f0;border-radius:18px;padding:22px;margin-bottom:20px;box-shadow:0 8px 22px #1234560b}
+button{cursor:pointer;border:0;background:#0866bb;border-radius:12px;color:white;padding:11px 16px;font:600 15px system-ui}
+button:disabled{opacity:.45}button.light{background:#e5eff7;color:#173657}
+select,input{border:1px solid #bbcddb;padding:10px;border-radius:10px;font:inherit;width:100%}
+.controls{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:14px 0}.controls>*{max-width:240px}
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.metric{padding:20px;border:1px solid #d7e5f0;background:white;border-radius:16px}.metric strong{font-size:27px;display:block}
+.scroller{overflow:auto}table{border-collapse:collapse;min-width:760px;width:100%}td,th{text-align:left;padding:12px;border-bottom:1px solid #e5edf4;vertical-align:top}
+th{background:#eef6fc;color:#2d5775}small,.sub{color:#647e92}.danger{color:#ac382e}
+@media(max-width:750px){.metrics{grid-template-columns:repeat(2,1fr)}.panel{padding:13px}}
+</style></head>
+<body><header><h1>SSW Course · Yönetim</h1><small style="color:#c2e3ff">Yetkili personel · kullanıcı seviyeleri ve üyelik talepleri</small></header>
+<main><section id="signin" class="panel"><h2>Güvenli yönetici girişi</h2>
+<p>Yalnızca yönetici olarak yetkilendirilmiş bir Google hesabı erişebilir.</p>
+<button id="login">Google ile giriş yap</button><p class="sub" id="authstatus"></p></section>
+<section id="dashboard" hidden>
+<div class="controls"><button id="reload">Yenile</button><button id="logout" class="light">Çıkış yap</button>
+<span id="identity"></span></div>
+<div class="metrics"><div class="metric"><strong id="total">—</strong>Profiller</div>
+<div class="metric"><strong id="interested">—</strong>Premium isteyenler</div>
+<div class="metric"><strong id="premium">—</strong>Premium üyeler</div>
+<div class="metric"><strong id="free">—</strong>Ücretsiz / kayıtlı</div></div>
+<div class="panel"><h2>Üye kayıtları</h2>
+<p class="sub">Bu liste yalnızca açılmış profilleri içerir; kullanıcıların ses kayıtları veya özel sohbet içerikleri listelenmez. Premium durumu uygulama üzerinden değiştirilemez.</p>
+<div class="controls"><input id="search" type="search" placeholder="Ad veya kullanıcı kimliği ara">
+<select id="level"><option value="">Tüm seviyeler</option><option>A1</option><option>A2</option><option>B1</option><option>B2</option></select>
+<select id="plan"><option value="">Tüm üyelikler</option><option value="free">Ücretsiz</option><option value="premium">Premium</option><option value="interested">Premium isteyen</option></select></div>
+<div class="scroller"><table><thead><tr><th>Profil</th><th>Seviye</th><th>Premium talebi</th><th>Üyelik</th><th>Güncellenme</th></tr></thead>
+<tbody id="members"></tbody></table></div><p id="count" class="sub"></p></div></section></main>
+<script type="module">
+import {createClient} from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+const supabase=createClient('https://lutbtvsuatbdwwjrtkrk.supabase.co','sb_publishable_IZsfZWZeKlJFKAZ882lAUw_DoSIfEki');
+const $=id=>document.getElementById(id);
+let profiles=[], requests=new Set(), entitlements=new Map(), isAdmin=false;
+function status(message){$('authstatus').textContent=message}
+async function verify(){
+ const {data:{user},error:authError}=await supabase.auth.getUser();
+ if(authError||!user){$('signin').hidden=false;$('dashboard').hidden=true;return}
+ const {data, error}=await supabase.from('ssw_admin_members').select('user_id').eq('user_id',user.id).maybeSingle();
+ isAdmin=!!data&&!error;
+ if(!isAdmin){$('signin').hidden=false;$('dashboard').hidden=true;status('Bu hesap için yönetici yetkisi bulunmuyor.');return}
+ $('signin').hidden=true;$('dashboard').hidden=false;$('identity').textContent=user.email||user.id;
+ await load();
+}
+async function load(){
+ if(!isAdmin)return;
+ const [p,r,e]=await Promise.all([
+  supabase.from('ssw_user_profiles').select('user_id,display_name,preferred_level,updated_at').order('updated_at',{ascending:false}).limit(1000),
+  supabase.from('ssw_premium_requests').select('user_id,interested').limit(1000),
+  supabase.from('ssw_plan_entitlements').select('user_id,plan').limit(1000)
+ ]);
+ if(p.error||r.error||e.error){status('Kayıtlar yüklenemedi. Erişim politikalarını kontrol edin.');return}
+ profiles=p.data||[];
+ requests=new Set((r.data||[]).filter(x=>x.interested).map(x=>x.user_id));
+ entitlements=new Map((e.data||[]).map(x=>[x.user_id,x.plan]));
+ $('total').textContent=profiles.length;
+ $('interested').textContent=requests.size;
+ $('premium').textContent=[...entitlements.values()].filter(x=>x==='premium').length;
+ $('free').textContent=profiles.filter(x=>entitlements.get(x.user_id)!=='premium').length;
+ render();
+}
+function render(){
+ const text=$('search').value.trim().toLowerCase(),level=$('level').value,plan=$('plan').value;
+ const selected=profiles.filter(x=>{
+  const active=entitlements.get(x.user_id)||'free';
+  return (!text||(x.display_name||'').toLowerCase().includes(text)||x.user_id.includes(text))
+   &&(!level||x.preferred_level===level)
+   &&(!plan||(plan==='interested'?requests.has(x.user_id):active===plan));
+ });
+ const body=$('members');body.replaceChildren();
+ for(const row of selected){
+  const tr=document.createElement('tr');
+  const cells=[(row.display_name||'İsimsiz')+' · '+row.user_id.slice(0,8),
+    row.preferred_level||'Henüz belirlenmedi',
+    requests.has(row.user_id)?'Talep var':'—',
+    entitlements.get(row.user_id)==='premium'?'Premium':'Ücretsiz',
+    row.updated_at?new Date(row.updated_at).toLocaleDateString('tr-TR'):'—'];
+  for(const value of cells){const td=document.createElement('td');td.textContent=value;tr.appendChild(td)}
+  body.appendChild(tr);
+ }
+ $('count').textContent=selected.length+' üye gösteriliyor (en fazla 1000 profil).';
+}
+$('login').addEventListener('click',async()=>{
+ status('Google yönlendirmesi başlatılıyor...');
+ const {error}=await supabase.auth.signInWithOAuth({
+  provider:'google',options:{redirectTo:location.href.split('#')[0]}
+ });
+ if(error)status('Giriş başlatılamadı: '+error.message);
+});
+$('logout').addEventListener('click',async()=>{
+ await supabase.auth.signOut();isAdmin=false;await verify();
+});
+$('reload').addEventListener('click',load);
+for(const id of ['search','level','plan'])$(id).addEventListener('input',render);
+verify().catch(()=>status('Bağlantı hatası. Yeniden deneyin.'));
+</script></body></html>
